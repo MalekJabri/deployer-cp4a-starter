@@ -1,0 +1,26 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: cp4ba-run
+  namespace: default
+spec:
+  timeouts:
+    pipeline: "9h30m00s"
+    tasks: "8h59m59s"
+    finally: "0h30m00s"
+  pipelineRef:
+    name: cp4ba-deploy
+  params:
+    - name: cp4ba-case
+      value: "24.0.0"
+    - name: namespace
+      value: "cp4ba-starter"
+  workspaces:
+    - name: ws
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi

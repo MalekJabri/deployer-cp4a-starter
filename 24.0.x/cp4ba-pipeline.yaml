@@ -1,0 +1,357 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: cp4ba-deploy
+  namespace: default
+spec:
+  params:
+    - name: cp4ba-case
+      type: string
+      default: "24.0.0"
+    - name: namespace
+      type: string
+      default: "cp4ba-starter"
+  workspaces:
+    - name: ws
+  tasks:
+    - name: get-sources
+      taskSpec:
+        steps:
+        - name: git-clone-step
+          image: quay.io/ibmtz/ibm-pak-ubi:latest
+          script: |
+            #!/usr/bin/env bash
+            git clone https://github.com/cloud-native-toolkit/deployer-cp4a-starter-sources.git $(workspaces.ws.path)/sources
+        workspaces:
+          - name: ws
+    - name: add-namespace
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF 
+            kind: Namespace
+            apiVersion: v1
+            metadata:
+              name: $(params.namespace)
+            EOF
+    - name: get-ibm-entitlement-key
+      params:
+        - name: KEY_ID
+          value: 968d7819-f2c5-7b67-c420-3c6bfd51521e
+        - name: SECRETS_MANAGER_ENDPOINT_URL
+          value: >-
+            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+      taskRef:
+        kind: Task
+        name: ibmcloud-secrets-manager-get
+    - name: set-retrieved-entitlement-key
+      runAfter:
+        - get-ibm-entitlement-key
+        - add-namespace
+      params:
+        - name: entitlement-key
+          value: $(tasks.get-ibm-entitlement-key.results.secret-value)
+        - name: namespace
+          value: "$(params.namespace)"
+      taskSpec:
+        params:
+          - name: entitlement-key
+          - name: namespace
+        steps:
+          - name: set-entitlement-key
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              oc get secret "ibm-entitlement-key" -n $(params.namespace)
+              if [ $? -eq 0 ]; then
+                  echo "Deleting existing secret..."
+                  oc delete secrets "ibm-entitlement-key" -n $(params.namespace)
+              fi
+              oc create secret docker-registry "ibm-entitlement-key" -n $(params.namespace) "--docker-server=cp.icr.io" "--docker-username=cp" "--docker-password=$(params.entitlement-key)"
+    - name: create-sa
+      runAfter:
+        - add-namespace
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            oc project $(params.namespace)
+            oc apply -f - <<EOF 
+            apiVersion: v1
+            kind: ServiceAccount
+            metadata:
+              name: ibm-cp4ba-anyuid
+            imagePullSecrets:
+            - name: "ibm-entitlement-key"
+            EOF
+            oc adm policy add-scc-to-user anyuid -z ibm-cp4ba-anyuid
+    - name: install-cp4ba-operator
+      runAfter:
+        - create-sa
+        - get-sources
+        - set-retrieved-entitlement-key
+      params:
+        - name: cp4ba-case
+          value: $(params.cp4ba-case)
+        - name: namespace
+          value: "$(params.namespace)"
+      taskSpec:
+        results:
+          - name: CP4BAyamlFile
+        params:
+          - name: cp4ba-case
+          - name: namespace
+        steps:
+          - name: get-marketplace-yaml
+            image: quay.io/ibmtz/ibm-pak-ubi:latest
+            script: |
+              #!/usr/bin/env bash
+              case=$(params.cp4ba-case)
+
+              git clone -b $case https://github.com/icp4a/cert-kubernetes
+
+              currentDir=$(pwd)
+
+              cp $currentDir/cert-kubernetes/descriptors/op-olm/catalog_source.yaml $(workspaces.ws.path)/catalog_source.yaml
+              cp $currentDir/cert-kubernetes/descriptors/op-olm/subscription.yaml $(workspaces.ws.path)/cp4ba-subscription.yaml
+              cp $currentDir/cert-kubernetes/descriptors/op-olm/operator_group.yaml $(workspaces.ws.path)/operator_group.yaml
+
+              operatorGroupFile=$(workspaces.ws.path)/operator_group.yaml
+              yq -e '.metadata.namespace = "$(params.namespace)"' -i $operatorGroupFile
+              yq -e '.spec.targetNamespaces[0] = "$(params.namespace)"' -i $operatorGroupFile
+
+              cat $(workspaces.ws.path)/operator_group.yaml
+              oc apply -f $(workspaces.ws.path)/operator_group.yaml
+
+              cat $(workspaces.ws.path)/catalog_source.yaml
+              oc apply -f $(workspaces.ws.path)/catalog_source.yaml 
+
+              subscriptionFile=$(workspaces.ws.path)/cp4ba-subscription.yaml
+
+              yq -e '.metadata.namespace = "$(params.namespace)"' -i $subscriptionFile
+
+              cat $(workspaces.ws.path)/cp4ba-subscription.yaml
+
+              oc apply -f $(workspaces.ws.path)/cp4ba-subscription.yaml
+
+              # wait for operator to be ready
+              namespace="$(params.namespace)"
+              echo "Waiting for operator to be ready..."
+              cp4baOperator=$(oc get csv -n "$namespace" --no-headers -o custom-columns=NAME:.metadata.name | grep "ibm-cp4a-operator.*")
+              echo "csv/$cp4baOperator"
+              while [[ -z $(oc get csv/$cp4baOperator -n "$namespace" -o 'jsonpath={.status.phase}' | grep 'Succeeded') ]]; do
+                  echo "Waiting for CSV to reach 'Succeeded' condition..."
+                  sleep 10
+                  cp4baOperator=$(oc get csv -n "$namespace" --no-headers -o custom-columns=NAME:.metadata.name | grep "ibm-cp4a-operator.*")
+              done
+              echo "Done!"
+              # apply the need operators
+              oc project $(params.namespace)
+              bash $currentDir/cert-kubernetes/scripts/cpfs/installer_scripts/cp3pt0-deployment/setup_singleton.sh --enable-licensing --license-accept
+      workspaces:
+        - name: ws
+    - name: deploy-cp4ba
+      runAfter:
+        - install-cp4ba-operator
+      params:
+        - name: cp4ba-case
+          value: "$(params.cp4ba-case)"
+        - name: namespace
+          value: "$(params.namespace)"
+      taskSpec:
+        params:
+          - name: cp4ba-case
+          - name: namespace
+        steps:
+          - name: script
+            image: quay.io/ibmtz/ibm-pak-ubi:latest
+            script: |
+              #!/usr/bin/env bash
+              # Read the content of the YAML file and save it to a variable
+              case=$(params.cp4ba-case)
+
+              curl -s https://raw.githubusercontent.com/IBM/cloud-pak/master/repo/case/ibm-cp-automation/index.yaml > cp-index.yaml
+              version=$(yq e ".versions.\"$case\".appVersion" cp-index.yaml)
+
+              yaml_file=$(workspaces.ws.path)/sources/cp4ba.yaml
+              yq -e '.metadata.namespace = "$(params.namespace)"' -i $yaml_file
+              yq -e '.spec.appVersion = "24.0.0"' -i $yaml_file
+              yaml_content=$(cat "$yaml_file")
+              echo "$yaml_content"
+              # Print the content to verify
+              echo "$yaml_content" | oc apply -f -
+      workspaces:
+        - name: ws
+    - name: wait-for-deploy
+      retries: 5
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      timeout: "6h00m00s"
+      runAfter:
+        - deploy-cp4ba
+      params:
+        - name: SCRIPT
+          value: |
+            #!/usr/bin/env bash
+            oc project $(params.namespace)
+            SECONDS=0
+            echo "waiting on CP4BA to install... This could take up to 6 hours...."
+            while true; do
+              deploymentStatusJSON=$(oc get ICP4ACluster/icp4adeploy -o jsonpath={.status} | jq -c '[.conditions]')
+              configMap=$(oc get configmap icp4adeploy-cp4ba-access-info -o jsonpath={.metadata.name} --ignore-not-found)
+              PrereqReady=$(echo $deploymentStatusJSON | jq '.[0][] | select(.type == "PrereqReady")')
+              Running=$(echo $deploymentStatusJSON | jq '.[0][] | select(.type == "Running")' )
+              Ready=$(echo $deploymentStatusJSON | jq '.[0][] | select(.type == "Ready")' )
+              RunningStatus="False"
+              ReadyStatus="False"
+              PrereqReadyStatus="False"
+
+              if [[ -n "$PrereqReady" ]]; then
+                PrereqReadyStatus=$(echo $PrereqReady | jq '.status')
+              fi
+
+              if [[ -n "$Running" ]]; then
+                RunningStatus=$(echo $Running | jq '.status')
+              fi
+
+              if [[ -n "$Ready" ]]; then
+                ReadyStatus=$(echo $Ready | jq '.status')
+              fi
+
+              echo "Running status: $RunningStatus"
+              echo "PreReq status: $PrereqReadyStatus"
+              echo "Ready status: $ReadyStatus"
+              
+              if [ $ReadyStatus == '"True"' ] && [ $RunningStatus == '"True"' ] && [ $PrereqReadyStatus == '"True"' ]; then
+                # Code block to be executed if all three conditions are true
+                echo "All conditions are true."
+                break
+              else
+                # Code block to be executed if any of the conditions is false
+                echo "At least one condition is false... waiting for deployment...."
+                echo "Checking back in 10 mins...."
+              fi
+
+              sleep 600
+              done
+            echo "CP4BA Installed!"
+    - name: update-common-services-certs
+      retries: 5
+      runAfter:
+        - wait-for-deploy
+      params:
+        - name: namespace
+          value: "$(params.namespace)"
+      taskRef:
+        kind: Task
+        name: ibm-tls-certs
+    - name: update-cpd-certs
+      runAfter:
+        - deploy-cp4ba
+      params:
+        - name: namespace
+          value: "$(params.namespace)"
+      timeout: "2h00m"
+      taskSpec:
+        params:
+        - name: namespace
+        steps:
+        - name: install-certs-key
+          image: quay.io/openshift/origin-cli:4.10
+          script: |
+            #!/usr/bin/env bash
+            echo "Getting certs from common services"
+            oc extract secret/$(oc get ingresscontroller.operator default -n openshift-ingress-operator -o jsonpath='{.spec.defaultCertificate.name}') -n openshift-ingress --to=. --keys=tls.crt,tls.key --confirm
+            csplit -s -z -f cert- tls.crt '/-----BEGIN CERTIFICATE-----/'  '{*}'
+            ls -ltr
+
+            mv tls.crt tls.crt.original
+
+            mv cert-00 tls.crt
+
+            cat cert-01 > ca.crt
+
+            ls -ltr
+            oc -n $(params.namespace) create secret generic cpd-route-tls-secret \
+            --from-file=tls.crt=tls.crt \
+            --from-file=tls.key=tls.key \
+            --from-file=ca.crt=ca.crt \
+            --dry-run=client -o yaml | oc apply -f -
+
+            status=$(oc get ZenService iaf-zen-cpdservicef -n $(params.namespace) -o jsonpath={.status.zenStatus} --ignore-not-found)
+            while [[ -z $(echo $status | grep 'Completed') ]]; do
+              echo "Waiting for ZenService iaf-zen-cpdservice to be created..."
+              sleep 120
+              status=$(oc get ZenService iaf-zen-cpdservice -n $(params.namespace) -o jsonpath={.status.zenStatus} --ignore-not-found)
+            done
+
+            echo "ZenService created! Now updating..."
+            oc patch ZenService iaf-zen-cpdservice --type='json' -p='[{"op": "add", "path": "/spec/zenCustomRoute","value":{"route_secret":"cpd-route-tls-secret","route_reencrypt":true}}]' -n $(params.namespace)
+
+            echo "Waiting for certs to update..."
+            sleep 600
+
+            status=$(oc get ZenService iaf-zen-cpdservice -n $(params.namespace) -o jsonpath={.status.zenStatus})
+            while [[ -z $(echo $status | grep 'Completed') ]]; do
+                echo "Waiting for ZenService iaf-zen-cpdservice to reach 'Completed' condition..."
+                sleep 30
+                status=$(oc get ZenService iaf-zen-cpdservice -n $(params.namespace) -o jsonpath={.status.zenStatus})
+            done
+
+            echo "Certs updated!"
+  finally:
+    - name: loginorcleanup
+      retries: 5
+      params:
+        - name: cp4ba-case
+          value: "$(params.cp4ba-case)"
+        - name: namespace
+          value: "$(params.namespace)"
+        - name: taskStatus
+          value: "$(tasks.status)"
+      taskSpec:
+        params:
+          - name: cp4ba-case
+          - name: namespace
+          - name: taskStatus
+        steps:
+          - name: script
+            image: quay.io/ibmtz/ibm-pak-ubi:latest
+            script: |
+              #!/usr/bin/env bash
+
+              if [ $(params.taskStatus) == "Succeeded" ]; then
+                echo "all tasks are successful. No need to cleanup."
+                oc get configmap icp4adeploy-cp4ba-access-info -n $(params.namespace) -o yaml | yq e '.data'
+                exit 0
+              fi
+
+              oc project $(params.namespace)
+              echo "CP4BA failed to install in the correct amount of time... Cleaning up"
+  
+              echo "Deleting ICP4ACluster/icp4adeploy"
+              oc delete ICP4ACluster/icp4adeploy --ignore-not-found
+  
+              case=$(params.cp4ba-case)
+
+              git clone -b $case https://github.com/icp4a/cert-kubernetes
+              
+              currentDir=$(pwd)
+  
+              bash $currentDir/cert-kubernetes/scripts/deleteOperator.sh -n $(params.namespace)
+              printf 'y' | bash $currentDir/cert-kubernetes/scripts/cp4a-uninstall-clean-up.sh
+
+              echo "Deleting namepspace"
+              oc delete project $(params.namespace)
+              echo "Waiting for project to fully delete..."
+              sleep 180
+              echo "CP4BA uninstall successfully. Please rerun this pipeline to reinstall."
+      workspaces:
+        - name: ws         
+          workspace: ws
