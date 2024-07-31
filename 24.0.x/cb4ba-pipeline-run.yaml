@@ -15,6 +15,8 @@ spec:
       value: "24.0.0"
     - name: namespace
       value: "cp4ba-starter"
+    - name: mode
+      value: "starter"
   workspaces:
     - name: ws
       volumeClaimTemplate:
