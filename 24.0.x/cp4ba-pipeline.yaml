@@ -180,7 +180,7 @@ spec:
 
               yaml_file=$(workspaces.ws.path)/sources/cp4ba.yaml
               yq -e '.metadata.namespace = "$(params.namespace)"' -i $yaml_file
-              yq -e '.spec.appVersion = "24.0.0"' -i $yaml_file
+              yq -e '.spec.appVersion = "$version"' -i $yaml_file
               yaml_content=$(cat "$yaml_file")
               echo "$yaml_content"
               # Print the content to verify
