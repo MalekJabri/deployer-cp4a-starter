@@ -7,7 +7,7 @@ spec:
   params:
     - name: cp4ba-case
       type: string
-      default: "5.1.2"
+      default: "5.1.6"
     - name: namespace
       type: string
       default: "cp4ba-starter"
@@ -200,6 +200,59 @@ spec:
               echo "$yaml_content" | oc apply -f -
       workspaces:
         - name: ws
+    - name: check-postgres-license
+      retries: 5
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      timeout: "1h05m00s"
+      runAfter:
+        - deploy-cp4ba
+      params:
+        - name: SCRIPT
+          value: |
+            #!/usr/bin/env bash
+            oc project $(params.namespace)
+            max_wait_time=$((60 * 60)) # 1 hour in seconds
+            check_interval=$((5 * 60)) # 5 minutes in seconds
+            elapsed_time=0
+            while [[ $elapsed_time -lt $max_wait_time ]]; do
+                echo "Check the Postgresql."
+                namespace=$(params.namespace)
+                JobStatus=$(oc get job create-postgres-license-config -n $namespace -o jsonpath={.status} | jq -c '[.conditions]')
+                licenseInfo=$(oc get cluster.postgresql -n $namespace -o jsonpath='{range .items[*]}{.status.licenseStatus.licenseStatus}')
+                text=Invalid
+                typeInfo=$(echo $JobStatus | jq '.[0][] | select(.type == "Complete")')
+                status=$(echo $JobStatus | jq '.[0][] | select(.status == "True")')
+                if [[ -n "$typeInfo" &&  -n "$status" &&  "$licenseInfo" == *"$text"*  ]]; then
+                    echo "The license information contains the $text : $licenseInfo"
+                    echo "Let fix the postgresql"
+                    echo "Skip update for IBM BTS"
+                    oc annotate secret postgresql-operator-controller-manager-config  ibm-bts/skip-updates="true" -n $namespace
+                    echo "Replace containe with the fix approach"
+                    oc get job create-postgres-license-config -n $namespace -o yaml | \
+                    sed -e 's/operator.ibm.com\/opreq-control: "true"/operator.ibm.com\/opreq-control: "false"/' \
+                    -e 's|\(image: \).*|\1"cp.icr.io/cp/cpd/edb-postgres-license-provider@sha256:c1670e7dd93c1e65a6659ece644e44aa5c2150809ac1089e2fd6be37dceae4ce"|' \
+                    -e '/controller-uid:/d' | \
+                    oc replace --force -f - && \
+                    oc wait --for=condition=complete job/create-postgres-license-config -n $namespace 
+                    break
+                elif [[ "$licenseInfo" == *"Valid license"* ]]; then
+                  echo "The license is valid so we can skip"
+                  break
+                else  
+                    echo "The job is not there yet, Lets wait" 
+                fi
+                echo " loop number $((elapsed_time + check_interval))"
+                sleep $check_interval
+                elapsed_time=$((elapsed_time + check_interval))
+            done
+            if [[ $elapsed_time -lt $max_wait_time ]]; then 
+            echo "the Postgresql has been completed"
+            oc get cluster.postgresql -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\t"}{.status.licenseStatus.licenseExpiration}{"\t"}{.status.licenseStatus.licenseStatus}{"\n"}{end}'
+            else 
+            echo "Reached the maximum wait time of 1 hour."
+            fi
     - name: wait-for-deploy
       retries: 5
       taskRef:

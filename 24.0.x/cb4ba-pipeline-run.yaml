@@ -12,7 +12,7 @@ spec:
     name: cp4ba-deploy
   params:
     - name: cp4ba-case
-      value: "24.0.0"
+      value: "24.0.0-IF002"
     - name: namespace
       value: "cp4ba-starter"
     - name: mode
