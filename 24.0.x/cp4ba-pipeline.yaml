@@ -177,13 +177,18 @@ spec:
               #!/usr/bin/env bash
               # Read the content of the YAML file and save it to a variable
               case=$(params.cp4ba-case)
-
               curl -s https://raw.githubusercontent.com/IBM/cloud-pak/master/repo/case/ibm-cp-automation/index.yaml > cp-index.yaml
-              version=$(yq e ".versions.\"$case\".appVersion" cp-index.yaml)
-
+              if [[ $case == 24.0.0* ]]; then
+                  version=24.0.0
+              elif [[ $case == 24.0.1* ]]; then    
+                  version=24.0.1
+              else 
+                  version=$(yq e ".versions.\"$case\".appVersion" cp-index.yaml)
+              fi
+              echo "The version selected is $version"
               yaml_file=$(workspaces.ws.path)/sources/cp4ba.yaml
               yq -e '.metadata.namespace = "$(params.namespace)"' -i $yaml_file
-              yq -e '.spec.appVersion = "24.0.0"' -i $yaml_file
+              yq -e '.spec.appVersion = "'$version'"' -i $yaml_file
               yaml_content=$(cat "$yaml_file")
               echo "$yaml_content"
               # Print the content to verify

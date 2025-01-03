@@ -3,3 +3,5 @@
 /.DS_Store
 deployer-cp4a-starter/23.0.x/cert-kubernetes
 deployer-cp4a-starter/23.0.x/ibm-cp-automation
+23.0.x/.DS_Store
+23.0.x/test.json
