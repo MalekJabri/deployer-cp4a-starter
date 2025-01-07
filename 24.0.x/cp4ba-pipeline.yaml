@@ -204,9 +204,17 @@ spec:
         - install-cp4ba-operator
       params:
         - name: cp4ba-case
-          value: "$(params.cp4ba-case)"
+          value: $(params.cp4ba-case)
         - name: namespace
-          value: "$(params.namespace)"
+          value: $(params.namespace)
+        - name: projectId
+          value: $(params.projectId)
+        - name: myUserId
+          value: $(params.myUserId)
+        - name: myAPIKey
+          value: $(params.myAPIKey)
+        - name: providerUrl
+          value: $(params.providerUrl)
       taskSpec:
         params:
           - name: cp4ba-case
