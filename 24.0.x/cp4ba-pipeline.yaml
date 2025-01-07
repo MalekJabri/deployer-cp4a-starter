@@ -11,8 +11,20 @@ spec:
     - name: namespace
       type: string
       default: "cp4ba-starter"
-    - default: starter
-      name: mode
+    - name: mode
+      default: starter
+      type: string
+    - name: myAPIKey
+      type: string
+      default: "myAPIKey"
+    - name: projectId
+      default: "00000000-1111-2222-3333-444444444444"
+      type: string
+    - name: providerUrl
+      default: "https://us-south.ml.cloud.ibm.com"
+      type: string
+    - name: myUserId
+      default: "malek.jabri@be.ibm.com"
       type: string
   workspaces:
     - name: ws
@@ -27,6 +39,35 @@ spec:
             git clone https://github.com/cloud-native-toolkit/deployer-cp4a-starter-sources.git $(workspaces.ws.path)/sources
         workspaces:
           - name: ws
+    - name: add-egressrules
+      runAfter:
+        - add-namespace
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF 
+            kind: NetworkPolicy 
+            apiVersion: networking.k8s.io/v1 
+            metadata: 
+              name: bastudio-egress-to-ibmcloud 
+              namespace: $(params.namespace)
+            spec: 
+              podSelector: 
+                matchLabels: 
+                  app.kubernetes.io/component: deployment 
+                  app.kubernetes.io/instance: icp4adeploy 
+                  app.kubernetes.io/managed-by: Operator 
+                  app.kubernetes.io/name: bastudio 
+              egress: 
+                - ports: 
+                    - protocol: TCP 
+                      port: 443 
+              policyTypes: 
+                - Egress  
+            EOF
     - name: add-namespace
       taskRef:
         kind: Task
@@ -170,6 +211,10 @@ spec:
         params:
           - name: cp4ba-case
           - name: namespace
+          - name: projectId
+          - name: myUserId
+          - name: myAPIKey
+          - name: providerUrl
         steps:
           - name: script
             image: quay.io/ibmtz/ibm-pak-ubi:latest
@@ -177,6 +222,10 @@ spec:
               #!/usr/bin/env bash
               # Read the content of the YAML file and save it to a variable
               case=$(params.cp4ba-case)
+              projectId=$(params.projectId)
+              myUserId=$(params.myUserId)
+              myAPIKey=$(params.myAPIKey)
+              providerUrl=$(params.providerUrl)
               curl -s https://raw.githubusercontent.com/IBM/cloud-pak/master/repo/case/ibm-cp-automation/index.yaml > cp-index.yaml
               if [[ $case == 24.0.0* ]]; then
                   version=24.0.0
@@ -191,6 +240,29 @@ spec:
               yq -e '.spec.appVersion = "'$version'"' -i $yaml_file
               yq -e '.spec.shared_configuration.sc_deployment_baw_license = "non-production"' -i $yaml_file
               yq -e '.spec.shared_configuration.sc_deployment_fncm_license = "non-production"' -i $yaml_file
+              if [[ $myAPIKey != "myAPIKey" ]]; then
+              cat >> $yaml_file << EOF  
+                bastudio_configuration:
+                  custom_secret_name: custom-xml-secret-genai
+                  bastudio_custom_xml: |+ 
+                        <properties> 
+                            <server> 
+                                  <gen-ai merge="mergeChildren"> 
+                                      <project-id>${projectId}</project-id> 
+                                      <provider-url>${providerUrl}</provider-url> 
+                                      <auth-alias>watsonx.ai_auth_alias</auth-alias> 
+                                  </gen-ai> 
+                            </server> 
+                          </properties> 
+              EOF
+              cat > custom-xml-secret-genai.xml << EOF
+              <server>
+                  <authData id="watsonx.ai.auth_alias" user="${myUserId}" password="${myAPIKey}" /> 
+              </server> 
+              EOF
+              oc create secret generic custom-xml-secret-genai --from-file=sensitiveCustomConfig=./custom-xml-secret-genai.xml
+              yq eval $yaml_file > /dev/null || echo "YAML validation failed!"
+              fi
               yaml_content=$(cat "$yaml_file")
               echo "$yaml_content"
               # Print the content to verify
