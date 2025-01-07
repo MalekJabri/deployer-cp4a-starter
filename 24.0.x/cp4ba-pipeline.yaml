@@ -249,7 +249,7 @@ spec:
               yq -e '.spec.shared_configuration.sc_deployment_baw_license = "non-production"' -i $yaml_file
               yq -e '.spec.shared_configuration.sc_deployment_fncm_license = "non-production"' -i $yaml_file
               if [[ $myAPIKey != "myAPIKey" ]]; then
-              cat >> $yaml_file << EOF  
+              cat >> $yaml_file << EOF   
                 bastudio_configuration:
                   custom_secret_name: custom-xml-secret-genai
                   bastudio_custom_xml: |+ 
@@ -263,12 +263,12 @@ spec:
                             </server> 
                           </properties> 
               EOF
-              cat > custom-xml-secret-genai.xml << EOF
+              cat > $(workspaces.ws.path)/sources/custom-xml-secret-genai.xml << EOF
               <server>
                   <authData id="watsonx.ai.auth_alias" user="${myUserId}" password="${myAPIKey}" /> 
               </server> 
               EOF
-              oc create secret generic custom-xml-secret-genai --from-file=sensitiveCustomConfig=./custom-xml-secret-genai.xml
+              oc create secret generic custom-xml-secret-genai -n $(params.namespace) --from-file=sensitiveCustomConfig=$(workspaces.ws.path)/sources/custom-xml-secret-genai.xml
               yq eval $yaml_file > /dev/null || echo "YAML validation failed!"
               fi
               yaml_content=$(cat "$yaml_file")
