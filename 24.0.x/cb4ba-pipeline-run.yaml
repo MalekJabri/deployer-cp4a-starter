@@ -17,6 +17,14 @@ spec:
       value: "cp4ba-starter"
     - name: mode
       value: "starter"
+    - name: myAPIKey
+      value: "myAPIKey"
+    - name: projectId
+      value: "00000000-1111-2222-3333-444444444444"
+    - name: providerUrl
+      value: "https://us-south.ml.cloud.ibm.com"
+    - name: myUserId
+      value: "malek.jabri@be.ibm.com"
   workspaces:
     - name: ws
       volumeClaimTemplate:
