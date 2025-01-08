@@ -265,7 +265,7 @@ spec:
               EOF
               cat > $(workspaces.ws.path)/sources/custom-xml-secret-genai.xml << EOF
               <server>
-                  <authData id="watsonx.ai.auth_alias" user="${myUserId}" password="${myAPIKey}" /> 
+                  <authData id="watsonx.ai_auth_alias" user="${myUserId}" password="${myAPIKey}" /> 
               </server> 
               EOF
               oc create secret generic custom-xml-secret-genai -n $(params.namespace) --from-file=sensitiveCustom.xml=$(workspaces.ws.path)/sources/custom-xml-secret-genai.xml
