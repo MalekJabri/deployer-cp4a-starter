@@ -1,33 +1,43 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
+  annotations:
+    chains.tekton.dev/signed: 'true'
+    pipeline.openshift.io/started-by: 'kube:admin'
+    techzone.ibm.com/backstageEntityRef: 'component:default/cp4baccelerator24'
   generateName: cp4ba-run
   namespace: default
+  finalizers:
+    - chains.tekton.dev/pipelinerun
+  labels:
+    tekton.dev/pipeline: cp4ba-deploy
 spec:
+  taskRunTemplate:
+    serviceAccountName: pipeline
   timeouts:
-    pipeline: "9h30m00s"
-    tasks: "8h59m59s"
-    finally: "0h30m00s"
+    pipeline: 9h30m00s
   pipelineRef:
     name: cp4ba-deploy
   params:
     - name: cp4ba-case
-      value: "24.0.1"
+      value: 24.0.1
     - name: namespace
-      value: "cp4ba-starter"
+      value: cp4ba
     - name: mode
-      value: "starter"
+      value: starter
     - name: myAPIKey
-      value: "myAPIKey"
+      value: myAPIKey
     - name: projectId
-      value: "00000000-1111-2222-3333-444444444444"
+      value: 00000000-1111-2222-3333-444444444444
     - name: providerUrl
-      value: "https://us-south.ml.cloud.ibm.com"
+      value: 'https://eu-de.ml.cloud.ibm.com'
     - name: myUserId
-      value: "malek.jabri@be.ibm.com"
+      value: malek.jabri@be.ibm.com
   workspaces:
     - name: ws
       volumeClaimTemplate:
+        metadata:
+          creationTimestamp: null
         spec:
           accessModes:
             - ReadWriteOnce
