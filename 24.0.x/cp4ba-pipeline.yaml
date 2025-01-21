@@ -462,7 +462,7 @@ spec:
                 namespace: $(params.namespace)
                 name: ads-genai-secret
              type: Opaque
-             tringData:
+             stringData:
                 genAI: |- 
                   { 
                     "name": "GENAI",   
