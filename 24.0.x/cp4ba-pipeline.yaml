@@ -246,9 +246,11 @@ spec:
               yaml_file=$(workspaces.ws.path)/sources/cp4ba.yaml
               yq -e '.metadata.namespace = "$(params.namespace)"' -i $yaml_file
               yq -e '.spec.appVersion = "'$version'"' -i $yaml_file
+             
               yq -e '.spec.shared_configuration.sc_deployment_baw_license = "non-production"' -i $yaml_file
               yq -e '.spec.shared_configuration.sc_deployment_fncm_license = "non-production"' -i $yaml_file
               if [[ $myAPIKey != "myAPIKey" ]]; then
+              yq -e '.spec.ads_configuration.genai_secret_name = "ads-genai-secret"' -i $yaml_file
               cat >> $yaml_file << EOF   
                 bastudio_configuration:
                   custom_secret_name: custom-xml-secret-genai
@@ -446,8 +448,42 @@ spec:
       taskRef:
         kind: Task
         name: ibm-pak
-   
-
+    - name: create-secret-genai-ads
+      runAfter:
+          - add-namespace
+          - get-ibm-entitlement-key
+      params:
+        - name: SCRIPT
+          value: |
+             oc apply -f - <<EOF 
+             apiVersion: v1
+             kind: Secret
+             metadata:
+                namespace: $(params.namespace)
+                name: ads-genai-secret
+             type: Opaque
+             tringData:
+                genAI: |- 
+                  { 
+                    "name": "GENAI",   
+                    "type": "GENAI",   
+                    "description": null,   
+                    "updateTime": 0,   
+                    "authInfo": { 
+                      "authType": "IAM",
+                      "apiKey": "$(params.myAPIKey)",
+                      "authUrl": "https://iam.cloud.ibm.com/identity/token"   },   
+                      "providerAdditionalInfo": {     
+                          "providerType": "GENAI",
+                          "mlUrl":  "$(params.providerUrl)",     
+                          "projectId": "$(params.projectId)"
+                        },   
+                    "version": "V1" 
+                  }
+             EOF
+      taskRef:
+        kind: Task
+        name: ibm-pak  
   finally:
     - name: loginorcleanup
       retries: 5
