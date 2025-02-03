@@ -290,7 +290,7 @@ spec:
               cat >> $yaml_file << EOF   
                 bastudio_configuration:
                   custom_secret_name: custom-xml-secret-genai
-                  bastudio_custom_xml: |+ 
+                  bastudio_custom_xml: |+
                         <properties> 
                             <server> 
                                   <gen-ai merge="mergeChildren"> 
@@ -439,17 +439,19 @@ spec:
       params:
         - name: namespace
           value: $(params.namespace)
+        - name: myAPIKey
+          value: $(params.myAPIKey)
       taskSpec:
-        metadata: {}
         params:
           - name: namespace
-            type: string
+          - name: myAPIKey
         spec: null
         steps:
           - computeResources: {}
             image: 'quay.io/ibmtz/ibm-pak-ubi:latest'
             name: git-clone-step
             script: |
+              oc create secret docker-registry "mj-registry" -n $(params.namespace) "--docker-server=icr.io" "--docker-username=iamapikey" "--docker-password=$(params.myAPIKey)"
               curl -s https://raw.githubusercontent.com/MalekJabri/CP4AAccelerator/main/deploy-cp4accelerator.yaml > accelerator.yaml  
               yq -e '.metadata.namespace = "$(params.namespace)"' -i accelerator.yaml  
               oc apply -f accelerator.yaml
